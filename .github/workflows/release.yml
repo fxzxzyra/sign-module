@@ -14,11 +14,11 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
 
     - name: Install dependencies
       run: |
-        dnf install -y gcc make openssl-devel xz-devel
+        dnf install -y gcc make pkgconf-pkg-config openssl-devel xz-devel
 
     - name: Build binary
       run: |
@@ -26,6 +26,6 @@ jobs:
         make
 
     - name: Create Release
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v3
       with:
         files: dist/sign-module

@@ -9,47 +9,22 @@
 #ifndef _LINUX_MODULE_SIGNATURE_H
 #define _LINUX_MODULE_SIGNATURE_H
 
-// #include <linux/types.h>
+#include <stdint.h>
 
-/* In stripped ARM and x86-64 modules, ~ is surprisingly rare. */
 #define MODULE_SIG_STRING "~Module signature appended~\n"
+#define PKEY_ID_PKCS7 2
 
-// enum pkey_id_type {
-// 	PKEY_ID_PGP,		/* OpenPGP generated key ID */
-// 	PKEY_ID_X509,		/* X.509 arbitrary subjectKeyIdentifier */
-// 	PKEY_ID_PKCS7,		/* Signature in PKCS#7 message */
-// };
-
-/*
- * Module signature information block.
- *
- * The constituents of the signature section are, in order:
- *
- *	- Signer's name
- *	- Key identifier
- *	- Signature data
- *	- Information block
- */
-// struct module_signature {
-// 	u8	algo;		/* Public-key crypto algorithm [0] */
-// 	u8	hash;		/* Digest algorithm [0] */
-// 	u8	id_type;	/* Key identifier type [PKEY_ID_PKCS7] */
-// 	u8	signer_len;	/* Length of signer's name [0] */
-// 	u8	key_id_len;	/* Length of key identifier [0] */
-// 	u8	__pad[3];
-// 	__be32	sig_len;	/* Length of signature data */
-// };
+/* Signature bytes, this header, then MODULE_SIG_STRING. */
 struct module_signature {
-    uint8_t  algo;
-    uint8_t  hash;
-    uint8_t  id_type;
-    uint8_t  signer_len;
-    uint8_t  key_id_len;
-    uint8_t  __pad[3];
+    uint8_t algo;
+    uint8_t hash;
+    uint8_t id_type;
+    uint8_t signer_len;
+    uint8_t key_id_len;
+    uint8_t __pad[3];
     uint32_t sig_len;
 };
 
-// int mod_check_sig(const struct module_signature *ms, size_t file_len,
-// 		  const char *name);
+static_assert(sizeof(struct module_signature) == 12, "Kernel signature header must be 12 bytes");
 
 #endif /* _LINUX_MODULE_SIGNATURE_H */

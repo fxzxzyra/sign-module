@@ -1,24 +1,25 @@
 CC = gcc
-CFLAGS = -std=c23 -Os -s -flto -ffunction-sections -fdata-sections -Wl,--gc-sections -Wall -Wextra -Wno-unused-parameter -Isrc/include
-LIBS = -lcrypto -llzma
+PKG_CONFIG ?= pkg-config
+CPPFLAGS += -Isrc/include -DOPENSSL_API_COMPAT=40000 -DOPENSSL_NO_DEPRECATED $(shell $(PKG_CONFIG) --cflags libcrypto liblzma)
+CFLAGS ?= -std=c23 -O2 -flto -ffunction-sections -fdata-sections -Wall -Wextra -Wpedantic
+LDFLAGS ?= -flto -s -Wl,--gc-sections
+LIBS = $(shell $(PKG_CONFIG) --libs libcrypto liblzma)
 TARGET = sign-module
 SOURCE = src/sign-module.c
 DISTDIR = dist
 
-.PHONY: all clean example
+.PHONY: all clean check-deps
 
 all: $(DISTDIR)/$(TARGET)
 
-$(DISTDIR)/$(TARGET): $(SOURCE) | $(DISTDIR)
-	$(CC) $(CFLAGS) $(SOURCE) -o $(DISTDIR)/$(TARGET) $(LIBS)
+check-deps:
+	@$(PKG_CONFIG) --print-errors --exists 'libcrypto >= 4.0' 'liblzma >= 5.4'
+
+$(DISTDIR)/$(TARGET): $(SOURCE) src/include/linux/module_signature.h Makefile | check-deps $(DISTDIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(SOURCE) $(LDFLAGS) -o $@ $(LIBS)
 
 $(DISTDIR):
 	mkdir -p $(DISTDIR)
 
 clean:
 	rm -rf $(DISTDIR)
-
-example:
-	@echo "Usage examples:"
-	@echo "  ./$(DISTDIR)/$(TARGET) sha256 signing_key.pem signing_key.x509 nvidia.ko.xz"
-	@echo "  ./$(DISTDIR)/$(TARGET) sha512 signing_key.pem signing_key.x509 my_module.ko"

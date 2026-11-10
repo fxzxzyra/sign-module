@@ -11,9 +11,10 @@ A kernel module signing tool for Fedora Linux with XZ compression support.
 
 ## Requirements
 
-- OpenSSL 3.x
+- OpenSSL 4.x
 - liblzma 5.4+
-- GCC with C17 support
+- GCC with C23 support
+- Make and pkg-config
 
 ## Build
 
@@ -24,12 +25,12 @@ make
 ## Usage
 
 ```bash
-./sign-module <hash> <private_key.pem> <x509.der|.pem> <module.ko[.xz]>
+./dist/sign-module <hash> <private_key.pem> <x509.der|.pem> <module.ko[.xz]>
 ```
 
 Example:
 ```bash
-./sign-module sha256 signing_key.pem signing_key.x509 nvidia.ko.xz
+./dist/sign-module sha256 signing_key.pem signing_key.x509 nvidia.ko.xz
 ```
 
 ## Why this tool?
@@ -40,4 +41,5 @@ Future compression formats (zstd, etc.) can be added as Fedora adopts them.
 
 ## License
 
-MIT License
+MIT License. [src/include/linux/module_signature.h](src/include/linux/module_signature.h)
+is adapted from the Linux kernel and retains its GPL-2.0+ license and upstream attribution.
