@@ -102,10 +102,20 @@ static size_t unsigned_size(const unsigned char *data, size_t size)
     return size;
 }
 
-/* Consume the input buffer and share one coding loop for both directions. */
-static unsigned char *xz_transform(unsigned char *data, size_t *size, bool compress)
+static lzma_ret xz_init(lzma_stream *stream, size_t size, bool compress)
 {
-    lzma_stream stream = LZMA_STREAM_INIT;
+    lzma_mt mt = { .threads = lzma_cputhreads() };
+
+    if (!compress) {
+        if (!mt.threads)
+            mt.threads = 1;
+
+        mt.flags = LZMA_CONCATENATED;
+        mt.memlimit_threading = 256U << 20;
+        mt.memlimit_stop = UINT64_MAX;
+        return lzma_stream_decoder_mt(stream, &mt);
+    }
+
     lzma_options_lzma options;
 
     lzma_lzma_preset(&options, LZMA_PRESET_DEFAULT);
@@ -120,29 +130,29 @@ static unsigned char *xz_transform(unsigned char *data, size_t *size, bool compr
             .id = LZMA_VLI_UNKNOWN
         }
     };
-    lzma_mt mt = {
-        .threads = lzma_cputhreads(),
-        .filters = filters,
-        .check = LZMA_CHECK_CRC32,
-        .flags = compress ? 0 : LZMA_CONCATENATED,
-        .memlimit_threading = 256U << 20,
-        .memlimit_stop = UINT64_MAX
-    };
 
+    mt.filters = filters;
+    mt.check = LZMA_CHECK_CRC32;
+    mt.block_size = 3U << 20;
+
+    size_t blocks = (size + mt.block_size - 1) / mt.block_size;
+    if (mt.threads > blocks)
+        mt.threads = (uint32_t)blocks;
     if (!mt.threads)
         mt.threads = 1;
 
-    if (compress) {
-        /* Avoid idle workers for small modules and cap encoder working memory. */
-        mt.block_size = 3U << 20;
-        while (mt.threads > 1 &&
-               ((uint64_t)(mt.threads - 1) * mt.block_size >= *size ||
-                lzma_stream_encoder_mt_memusage(&mt) > (256U << 20)))
-            --mt.threads;
-    }
+    while (mt.threads > 1 &&
+           lzma_stream_encoder_mt_memusage(&mt) > (256U << 20))
+        --mt.threads;
 
-    lzma_ret ret = compress ? lzma_stream_encoder_mt(&stream, &mt)
-                            : lzma_stream_decoder_mt(&stream, &mt);
+    return lzma_stream_encoder_mt(stream, &mt);
+}
+
+/* Consume the input buffer and share one coding loop for both directions. */
+static unsigned char *xz_transform(unsigned char *data, size_t *size, bool compress)
+{
+    lzma_stream stream = LZMA_STREAM_INIT;
+    lzma_ret ret = xz_init(&stream, *size, compress);
     if (ret != LZMA_OK)
         fatal("XZ initialization failed: %d\n", (int)ret);
 
@@ -214,12 +224,9 @@ static EVP_PKEY *load_key(const char *path)
     return key;
 }
 
-/* Append DER directly to the module allocation; the kernel forbids signed attributes. */
-static unsigned char *sign_module(unsigned char *data, size_t *size,
-                                  const char *hash, EVP_PKEY *key, X509 *cert)
+static CMS_ContentInfo *create_signature(const unsigned char *data, size_t size,
+                                         const char *hash, EVP_PKEY *key, X509 *cert)
 {
-    *size = unsigned_size(data, *size);
-
     EVP_MD *md = EVP_MD_fetch(NULL, hash, NULL);
     if (!md)
         fatal("Unavailable digest '%s'\n", hash);
@@ -230,19 +237,34 @@ static unsigned char *sign_module(unsigned char *data, size_t *size,
     if (!cms || !CMS_add1_signer(cms, cert, key, md, CMS_NOCERTS | CMS_NOATTR))
         fatal("Create CMS signer failed\n");
 
-    BIO *content = BIO_new_mem_buf(data, (int)*size);
+    BIO *content = BIO_new_mem_buf(data, (int)size);
     if (!content || CMS_final(cms, content, NULL, CMS_BINARY | CMS_DETACHED) != 1)
         fatal("Finalize CMS signature failed\n");
 
     BIO_free(content);
     EVP_MD_free(md);
 
+    return cms;
+}
+
+/* Append DER directly to the module allocation; the kernel forbids signed attributes. */
+static unsigned char *sign_module(unsigned char *data, size_t *size,
+                                  const char *hash, EVP_PKEY *key, X509 *cert)
+{
+    *size = unsigned_size(data, *size);
+    CMS_ContentInfo *cms = create_signature(data, *size, hash, key, cert);
+
     int der_size = i2d_CMS_ContentInfo(cms, NULL);
     if (der_size <= 0)
         fatal("Encode CMS signature failed\n");
 
-    data = resize(data, *size + (size_t)der_size +
-                        sizeof(struct module_signature) + sizeof(magic_number) - 1);
+    const struct module_signature signature = {
+        .id_type = PKEY_ID_PKCS7,
+        .sig_len = htonl((uint32_t)der_size)
+    };
+    size_t total = *size + (size_t)der_size + sizeof(signature) + sizeof(magic_number) - 1;
+
+    data = resize(data, total);
     unsigned char *tail = data + *size;
 
     if (i2d_CMS_ContentInfo(cms, &tail) != der_size)
@@ -250,14 +272,9 @@ static unsigned char *sign_module(unsigned char *data, size_t *size,
 
     CMS_ContentInfo_free(cms);
 
-    memcpy(tail,
-           &(struct module_signature){
-               .id_type = PKEY_ID_PKCS7,
-               .sig_len = htonl((uint32_t)der_size)
-           },
-           sizeof(struct module_signature));
-    memcpy(tail + sizeof(struct module_signature), magic_number, sizeof(magic_number) - 1);
-    *size += (size_t)der_size + sizeof(struct module_signature) + sizeof(magic_number) - 1;
+    memcpy(tail, &signature, sizeof(signature));
+    memcpy(tail + sizeof(signature), magic_number, sizeof(magic_number) - 1);
+    *size = total;
 
     return data;
 }
